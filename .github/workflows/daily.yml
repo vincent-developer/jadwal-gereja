@@ -2,7 +2,7 @@ name: Run Notebook Daily
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # 06:00 UTC = 13:00 WIB
+    - cron: "0 10 * * *"   # 06:00 UTC = 13:00 WIB
   workflow_dispatch:       # Bisa dijalankan manual
 
 jobs:
