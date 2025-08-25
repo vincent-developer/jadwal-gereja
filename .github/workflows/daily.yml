@@ -23,4 +23,5 @@ jobs:
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
+          export PYTHONPATH="${PYTHONPATH}:$(pwd)"
           python scripts/generate_vincent_schedule.py
