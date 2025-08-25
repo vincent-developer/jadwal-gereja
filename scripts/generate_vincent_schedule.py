@@ -123,8 +123,8 @@ df_clean["Weekday"] = df_clean["Hari"].apply(lambda x: "yes" if x not in ["Sabtu
 # ====================================
 # 7. Output
 # ====================================
-print("📊 Data terformat:")
-display(df_clean)
+# print("📊 Data terformat:")
+# display(df_clean)
 
 # ====================================
 # 8. Simpan hasil ke Google Sheet lain
