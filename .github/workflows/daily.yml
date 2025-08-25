@@ -1,8 +1,8 @@
-name: Run Notebook Daily
+name: Generate Organist Schedule
 
 on:
   schedule:
-    - cron: "0 10 * * *"   # 06:00 UTC = 13:00 WIB
+    - cron: "0 23 * * *"   # 23:00 UTC = 06:00 WIB
   workflow_dispatch:       # Bisa dijalankan manual
 
 jobs:
@@ -19,8 +19,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Execute Jupyter Notebook
+      - name: Run Scripts
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
-          papermill main.ipynb output.ipynb
+          python scripts/generate_vincent_schedule.py

@@ -1,2 +1,17 @@
 # Ignore Google API credentials
 credentials.json
+
+# Virtual environment
+venv/
+ENV/
+env/
+.venv/
+
+# VS Code
+.vscode/
+
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
