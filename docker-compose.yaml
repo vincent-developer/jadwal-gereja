@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  jupyter:
+    build: .
+    ports:
+      - "8889:8888"
+    volumes:
+      - .:/app  # folder notebooks di host akan muncul di container
+    environment:
+      - PYTHONPATH=/app
