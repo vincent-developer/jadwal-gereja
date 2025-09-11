@@ -1,14 +1,36 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
+# %%
 import gspread
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from helpers.connection import get_google_credentials
+
+
+
+def get_first_advent(year):
+    """Cari Minggu Adven pertama (Minggu sebelum 25 Desember, hari Minggu terakhir sebelum Natal)"""
+    dec_25 = datetime(year, 12, 25)
+    # Mundur ke Minggu
+    days_to_sunday = dec_25.weekday() + 1  # Monday=0..Sunday=6
+    first_advent = dec_25 - timedelta(days=days_to_sunday + 21)  # 4 minggu sebelum Natal
+    return first_advent
+
+def liturgical_year(date):
+    """Tentukan Tahun Liturgi A/B/C berdasarkan tanggal."""
+    year = date.year
+    first_advent = get_first_advent(year)
+
+    if date >= first_advent:
+        lit_year = year + 1  # masuk ke tahun liturgi berikutnya
+    else:
+        lit_year = year
+
+    # Tahun 2020 = A → jadi lit_year % 3 mappingnya:
+    # 2020 % 3 = 1 → A
+    # 2021 % 3 = 2 → B
+    # 2022 % 3 = 0 → C
+    mapping = {1: "A", 2: "B", 0: "C"}
+    return mapping[lit_year % 3]
 
 # ====================================
 # 1. Setup koneksi Google Sheets
@@ -100,7 +122,14 @@ df_vincent = df_vincent.sort_values(by="B_dt").reset_index(drop=True)
 # 6. Format Output
 # ====================================
 df_clean = df_vincent[["B", "C", "D", "E", "F", "G", "B_dt"]].copy()
+
 df_clean.columns = ["Tanggal", "Jam", "Anamnesis", "Cara Tobat", "Koor", "Organis", "tgl-format"]
+
+
+# Tambahkan tahun liturgi (A/B/C)
+df_clean["Tahun Liturgi"] = df_clean["tgl-format"].apply(
+    lambda x: liturgical_year(x)
+)
 
 # Nama hari (Indonesia)
 import locale
@@ -115,7 +144,7 @@ except:
 df_clean["Hari"] = df_clean["tgl-format"].dt.strftime("%A")
 
 # Reorder kolom
-df_clean = df_clean[["Hari", "Tanggal", "Jam", "Anamnesis", "Cara Tobat", "Koor", "Organis"]]
+df_clean = df_clean[["Hari", "Tanggal", "Jam", "Anamnesis", "Cara Tobat", "Koor", "Organis", "Tahun Liturgi"]]
 
 # Tambahkan kolom Weekday (yes/no)
 df_clean["Weekday"] = df_clean["Hari"].apply(lambda x: "yes" if x not in ["Sabtu", "Minggu", "Saturday", "Sunday"] else "no")
@@ -125,6 +154,7 @@ df_clean["Weekday"] = df_clean["Hari"].apply(lambda x: "yes" if x not in ["Sabtu
 # ====================================
 # print("📊 Data terformat:")
 # display(df_clean)
+# currently comment because not supported by pure python
 
 # ====================================
 # 8. Simpan hasil ke Google Sheet lain
@@ -154,15 +184,25 @@ from pytz import timezone
 
 tz = timezone("Asia/Jakarta")
 last_update_str = f"Last Update: {datetime.now(tz).strftime('%d-%b-%Y %H:%M:%S WIB')}"
-sheet_out.update_acell('J1', last_update_str)
+sheet_out.update_acell('K1', last_update_str)
+
+# Ambil bulan & tahun sekarang
+today = datetime.today()
+bulan = today.month
+tahun = today.year
+
+# Generate URL
+url = f"https://www.imankatolik.or.id/kalender.php?b={bulan}&t={tahun}"
+
+sheet_out.update_acell('K2', "Kalender Liturgi:")
+sheet_out.update_acell('L2', url)
 
 print(f"✅ Data berhasil disimpan ke Google Sheet ID: {SPREADSHEET_ID_OUTPUT}, Sheet: {WORKSHEET_OUTPUT}")
 
 
 
 
-# In[ ]:
-
+# %%
 
 
 
