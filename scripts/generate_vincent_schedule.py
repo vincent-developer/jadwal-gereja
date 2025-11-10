@@ -212,6 +212,8 @@ async def send_telegram_reminders():
     print("\n✅ All reminders have been sent successfully!\n", flush=True)
 
 # =======================================
-# 6. EXECUTION
+# 6. RUN MAIN FUNCTION
 # =======================================
-await send_telegram_reminders()
+if __name__ == "__main__":
+    asyncio.run(send_telegram_reminders())
+
