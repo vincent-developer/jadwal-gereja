@@ -67,6 +67,7 @@ def save_df_to_gsheet(spreadsheet, worksheet_output_name, df):
     tz = timezone("Asia/Jakarta")
     last_update_str = f"Last Update: {datetime.now(tz).strftime('%d-%b-%Y %H:%M:%S WIB')}"
 
+# todo need handling gmt+7
     today = datetime.today()
     bulan, tahun = today.month, today.year
     url = f"https://www.imankatolik.or.id/kalender.php?b={bulan}&t={tahun}"
