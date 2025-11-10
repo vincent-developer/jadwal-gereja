@@ -22,6 +22,7 @@ jobs:
       - name: Run Scripts
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           export PYTHONPATH="${PYTHONPATH}:$(pwd)"
           python scripts/generate_vincent_schedule.py

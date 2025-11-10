@@ -1,6 +1,26 @@
+# Core data tools
 pandas
+
+# Google Sheets / Drive integration
 gspread
 oauth2client
+
+# Notebook execution and conversion
 jupyter
 nbconvert
 papermill
+babel
+
+# Environment variable management
+python-dotenv
+
+# Telegram bot integration (for notifications)
+python-telegram-bot==21.*
+
+
+# upgraded google integration
+# google-auth
+# google-auth-oauthlib
+# google-auth-httplib2
+# google-api-python-client
+

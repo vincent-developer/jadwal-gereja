@@ -5,7 +5,9 @@ credentials.json
 venv/
 ENV/
 env/
+.secrets/
 .venv/
+.env
 
 # VS Code
 .vscode/
