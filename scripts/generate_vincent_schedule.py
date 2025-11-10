@@ -164,22 +164,31 @@ df_clean["Weekday"] = df_clean["Hari"].apply(lambda x: "yes" if x not in ["Sabtu
 # =======================================
 spreadsheet = client.open_by_key(SPREADSHEET_ID_OUTPUT)
 
+
 async def send_telegram_reminders():
-    print("\n🚀 Starting reminder dispatch process...\n", flush=True)
+    print("🚀 Starting reminder process...\n", flush=True)
+
+    today = datetime.now(ZoneInfo("Asia/Jakarta"))
+    is_tuesday = today.strftime("%A").lower() == "tuesday"
+
+    if is_tuesday:
+        print("📅 Today is Tuesday — will send Telegram reminders.\n", flush=True)
+    else:
+        print(f"📅 Today is {today.strftime('%A')} — will only update Google Sheets (no Telegram send).\n", flush=True)
 
     for rec in organist_records:
         name, chat_id = rec["name"], rec["chat_id"]
-        print(f"🔹 Processing: {name}", flush=True)
+        print(f"🔹 Processing {name}...", flush=True)
 
-        # Filter schedule for this organist
+        # Filter schedule
         filter_df = df_clean[df_clean["Organis"].str.lower() == name.lower()].copy()
         await asyncio.to_thread(save_df_to_gsheet, spreadsheet, f"Jadwal {name.capitalize()}", filter_df)
 
+        # Always update Sheet, but send Telegram only on Tuesday
         if not filter_df.empty:
             next_three = filter_df.head(3).copy()
             next_three["Tanggal_dt"] = next_three["tgl-format"]
 
-            # Format date and time using Babel (Indonesian)
             tanggal_list = []
             for _, row in next_three.iterrows():
                 if pd.notnull(row["Tanggal_dt"]):
@@ -194,22 +203,20 @@ async def send_telegram_reminders():
             )
 
             print(reminder_text, flush=True)
-            print("-" * 60, flush=True)
+            print("=" * 60, flush=True)
 
-            # Send message to Telegram
-            if chat_id:
+            if is_tuesday and chat_id:
                 try:
                     bot = TelegramBot(chat_id=chat_id)
                     await bot.send(reminder_text)
-                    print(f"📨 Sent to {name} ({chat_id})", flush=True)
+                    print(f"📨 Reminder sent to {name} ({chat_id})", flush=True)
                 except Exception as e:
-                    print(f"⚠️ Failed to send to {name}: {e}", flush=True)
-        else:
-            print(f"ℹ️ No upcoming schedule found for {name}", flush=True)
+                    print(f"⚠️ Failed to send Telegram to {name}: {e}", flush=True)
 
-        await asyncio.sleep(2)  # Delay between users
+        await asyncio.sleep(2)
 
-    print("\n✅ All reminders have been sent successfully!\n", flush=True)
+    print("\n✅ All reminders processed!", flush=True)
+
 
 # =======================================
 # 6. RUN MAIN FUNCTION
