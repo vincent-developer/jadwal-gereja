@@ -24,6 +24,7 @@ nest_asyncio.apply()
 # =======================================
 # 1. HELPER FUNCTIONS
 # =======================================
+
 def get_first_advent(year):
     """Return the date of the first Advent Sunday for the given year."""
     dec_25 = datetime(year, 12, 25)
@@ -37,6 +38,43 @@ def liturgical_year(date):
     lit_year = year + 1 if date >= first_advent else year
     mapping = {1: "A", 2: "B", 0: "C"}
     return mapping[lit_year % 3]
+
+def read_last_log(client, spreadsheet_id, chat_id):
+    """Return last log entry for this chat_id, or None if not found."""
+    try:
+        sheet = client.open_by_key(spreadsheet_id).worksheet("Telegram Chat Log")
+        records = sheet.get_all_records()
+
+        for row in records:
+            if str(row.get("Chat ID")).strip() == str(chat_id).strip():
+                return row
+
+        return None
+
+    except WorksheetNotFound:
+        # Create sheet if missing
+        sheet = client.open_by_key(spreadsheet_id).add_worksheet(
+            title="Telegram Chat Log", rows="10", cols="6"
+        )
+        sheet.append_row(["Timestamp", "Name", "Chat ID", "Message Preview", "Schedule Hash", "Status"])
+        return None
+    
+def update_log(client, spreadsheet_id, name, chat_id, preview, hash_value, status):
+    """Update or insert log row ensuring only one record exists per chat_id."""
+    sheet = client.open_by_key(spreadsheet_id).worksheet("Telegram Chat Log")
+    records = sheet.get_all_records()
+
+    timestamp = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Search existing row
+    for idx, row in enumerate(records, start=2):  # row 1 = header
+        if str(row.get("Chat ID")).strip() == str(chat_id).strip():
+            sheet.update(range_name=f"A{idx}:F{idx}", values=[[timestamp, name, chat_id, preview, hash_value, status]])
+            return
+
+    # If not found → append new row
+    sheet.append_row([timestamp, name, chat_id, preview, hash_value, status])
+
 
 def save_df_to_gsheet(spreadsheet, worksheet_output_name, df):
     """Save a DataFrame to a specific Google Sheets worksheet."""
@@ -208,7 +246,8 @@ async def send_telegram_reminders():
                     hari = format_date(row["Tanggal_dt"], "EEEE", locale="id")
                     tanggal = format_date(row["Tanggal_dt"], "d MMMM y", locale="id")
                     jam = str(row["Jam"]).strip() if pd.notnull(row["Jam"]) else ""
-                    tanggal_list.append(f"- {hari}, {tanggal} • {jam}")
+                    koor = str(row["Koor"]).strip() if pd.notnull(row["Koor"]) else "-"
+                    tanggal_list.append(f"- {hari}, {tanggal} • {jam} (Koor: {koor})")
 
             reminder_text = (
                 f"Hi {name.capitalize()}, jadwal organis berikutnya adalah:\n" +
@@ -218,13 +257,29 @@ async def send_telegram_reminders():
             print(reminder_text, flush=True)
             print("=" * 60, flush=True)
 
-            if is_tuesday and chat_id:
-                try:
-                    bot = TelegramBot(chat_id=chat_id)
-                    await bot.send(reminder_text)
-                    print(f"📨 Reminder sent to {name} ({chat_id})", flush=True)
-                except Exception as e:
-                    print(f"⚠️ Failed to send Telegram to {name}: {e}", flush=True)
+
+            if chat_id:
+                # Buat schedule hash berdasarkan tanggal & jam jadwal
+                hash_value = "|".join(tanggal_list)
+
+                # Cek log terakhir untuk chat_id ini
+                previous_log = read_last_log(client, SPREADSHEET_ID_OUTPUT, chat_id)
+
+                if previous_log and previous_log.get("Schedule Hash") == hash_value:
+                    # Jadwal sama → skip kirim
+                    print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
+                    update_log(client, SPREADSHEET_ID_OUTPUT, name, chat_id, reminder_text[:100], hash_value, "skipped")
+                else:
+                    try:
+                        bot = TelegramBot(chat_id=chat_id)
+                        await bot.send(reminder_text)
+                        print(f"📨 Reminder sent to {name} ({chat_id})", flush=True)
+                        update_log(client, SPREADSHEET_ID_OUTPUT, name, chat_id, reminder_text[:100], hash_value, "sent")
+                    except Exception as e:
+                        print(f"⚠️ Failed to send Telegram to {name}: {e}", flush=True)
+                        update_log(client, SPREADSHEET_ID_OUTPUT, name, chat_id, reminder_text[:100], hash_value, f"error: {e}")
+
+
 
         await asyncio.sleep(2)
 
