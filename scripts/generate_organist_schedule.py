@@ -251,8 +251,10 @@ async def send_telegram_reminders():
 
             reminder_text = (
                 f"Hi {name.capitalize()}, jadwal organis berikutnya adalah:\n" +
-                "\n".join(tanggal_list)
+                "\n".join(tanggal_list) +
+                "\n\nUntuk jadwal yang lebih update silahkan cek di link berikut:\nhttps://linktr.ee/pasdiormabes"
             )
+
 
             print(reminder_text, flush=True)
             print("=" * 60, flush=True)
