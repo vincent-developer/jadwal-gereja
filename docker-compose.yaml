@@ -7,4 +7,5 @@ services:
     volumes:
       - .:/app  # folder notebooks di host akan muncul di container
     environment:
+      - JUPYTER_TOKEN=myfixedtoken123
       - PYTHONPATH=/app
