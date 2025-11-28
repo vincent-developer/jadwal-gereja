@@ -112,15 +112,17 @@ df = pd.DataFrame(data, columns=["B", "C", "D", "E", "F", "G", "H", "I", "J", "K
 mask_j = df["J"].astype(str).str.strip() != ""
 df.loc[mask_j, ["F", "G"]] = df.loc[mask_j, ["J", "K"]].values
 
-# Extract extra data (second schedule section)
-data_extra = [row[14:18] for row in all_data[4:] if len(row) >= 18]
-df_extra = pd.DataFrame(data_extra, columns=["O", "P", "Q", "R"])
-df_extra["B"], df_extra["C"], df_extra["F"], df_extra["G"] = df_extra["O"], df_extra["P"], df_extra["Q"], df_extra["R"]
-df_extra["D"], df_extra["E"] = "", ""
-df_extra = df_extra[["B", "C", "D", "E", "F", "G"]]
+# disabled because new structure apply on main
+# # Extract extra data (second schedule section)
+# data_extra = [row[14:18] for row in all_data[4:] if len(row) >= 18]
+# df_extra = pd.DataFrame(data_extra, columns=["O", "P", "Q", "R"])
+# df_extra["B"], df_extra["C"], df_extra["F"], df_extra["G"] = df_extra["O"], df_extra["P"], df_extra["Q"], df_extra["R"]
+# df_extra["D"], df_extra["E"] = "", ""
+# df_extra = df_extra[["B", "C", "D", "E", "F", "G"]]
 
-# Merge both sections
-df_all = pd.concat([df[["B", "C", "D", "E", "F", "G"]], df_extra], ignore_index=True)
+# # Merge both sections
+# df_all = pd.concat([df[["B", "C", "D", "E", "F", "G"]], df_extra], ignore_index=True)
+df_all = df[["B", "C", "D", "E", "F", "G"]]
 
 # Convert dates
 month_map = {
@@ -182,7 +184,18 @@ async def send_telegram_reminders():
 
         # Filter schedule
         filter_df = df_clean[df_clean["Organis"].str.lower() == name.lower()].copy()
-        await asyncio.to_thread(save_df_to_gsheet, spreadsheet, f"Jadwal {name.capitalize()}", filter_df)
+
+        # Drop the 'tgl-format' column before saving
+        df_to_save = filter_df.drop(columns=['tgl-format'])
+        
+        
+        # reorder the table
+        new_order = ["Hari", "Tanggal", "Jam", "Anamnesis", "Cara Tobat", "Koor", "Organis","Tahun Liturgi", "Weekday"]
+        df_to_save = df_to_save[new_order]
+        
+        await asyncio.to_thread(save_df_to_gsheet, spreadsheet, f"Jadwal {name.capitalize()}", df_to_save)
+        
+
 
         # Always update Sheet, but send Telegram only on Tuesday
         if not filter_df.empty:

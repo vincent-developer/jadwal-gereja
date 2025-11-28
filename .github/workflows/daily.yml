@@ -25,4 +25,4 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-          python scripts/generate_vincent_schedule.py
+          python scripts/generate_organist_schedule.py
