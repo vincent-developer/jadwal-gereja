@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import random
+import nest_asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -135,7 +136,7 @@ def update_log(
             sheet.update(
                 range_name=f"A{idx}:G{idx}",
                 values=[
-                    [timestamp, name, id, preview, hash_value, status, platform]
+                    [timestamp, name, id if platform == "telegram" else normalize_number(id), preview, hash_value, status, platform]
                 ],
             )
             return
@@ -458,5 +459,6 @@ async def send_notifications_reminders():
 # =======================================
 # 6. RUN MAIN FUNCTION
 # =======================================
-if __name__ == "__main__":
+if __name__ == "__main__":   
+    nest_asyncio.apply()
     asyncio.run(send_notifications_reminders())
