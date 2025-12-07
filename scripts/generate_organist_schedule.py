@@ -234,8 +234,25 @@ df = pd.DataFrame(data, columns=["B", "C", "D", "E", "F", "G", "H", "I", "J", "K
 # Override columns F,G if J,K are filled
 mask_j = df["J"].astype(str).str.strip() != ""
 df.loc[mask_j, ["F", "G"]] = df.loc[mask_j, ["J", "K"]].values
+# cleaning unused field
+df = df[["B", "C", "D", "E", "F", "G"]]
 
-df_all = df[["B", "C", "D", "E", "F", "G"]]
+
+target_date = datetime(datetime.now().year, 12, 25)
+today = datetime.now()
+if today < target_date:
+    # Extract extra data (second schedule section)
+    data_extra = [row[14:18] for row in all_data[4:982] if len(row) >= 18]
+    df_extra = pd.DataFrame(data_extra, columns=["O", "P", "Q", "R"])
+    df_extra["B"], df_extra["C"], df_extra["F"], df_extra["G"] = df_extra["O"], df_extra["P"], df_extra["Q"], df_extra["R"]
+    df_extra["D"], df_extra["E"] = "", ""
+    df_extra = df_extra[["B", "C", "D", "E", "F", "G"]]
+
+    # Merge both sections
+    df_all = pd.concat([df, df_extra], ignore_index=True)
+else:
+    df_all = df
+
 
 # Convert dates
 month_map = {
