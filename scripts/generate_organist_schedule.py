@@ -19,7 +19,11 @@ sys.path.append("..")
 from helpers.connection import get_google_credentials
 from utils.number import normalize_number
 from utils.telegram_bot import TelegramBot
-from utils.whatsapp_bot import WhatsAppBot
+from utils.whatsapp_bot import (
+    WhatsAppBot,
+    WhatsAppNetworkError,
+    WhatsAppAPIError
+)
 
 load_dotenv(find_dotenv())
 
@@ -472,10 +476,64 @@ async def send_notifications_reminders():
 
     print("\n✅ All reminders processed!", flush=True)
 
+async def check_and_run():
+    whatsAppBot = WhatsAppBot()
+    admin_chat_id = "1731149425"
+    
+    print("Checking WhatsApp connection status...")
+    
+    error_msg = None
+    try:
+        status = whatsAppBot.get_status()
+        
+        # Check if the 'connected' field is True
+        if status.get("connected") is True:
+            print("WhatsApp READY. Starting notifications...")
+            # Proceed to the main function
+            await send_notifications_reminders()
+            return 
+        else:
+            # Capture specific status from API if not connected
+            error_msg = status.get('whatsapp_status', 'NOT CONNECTED')
+            print(f"WhatsApp status is: {error_msg}")
+
+    except (WhatsAppNetworkError, WhatsAppAPIError) as e:
+        error_msg = str(e)
+    except Exception as e:
+        error_msg = f"Unexpected Error: {str(e)}"
+
+    # If error_msg exists, send Telegram alert and stop execution
+    if error_msg:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        reminder_text = (
+            f"[{timestamp}]\n\n"
+            f"WhatsApp API is unavailable.\n\n"
+            f"Error:\n\"{error_msg}\""
+        )
+        
+        print("Sending alert to Telegram...")
+        try:
+            telegramBot = TelegramBot(chat_id=admin_chat_id)
+            await telegramBot.send(reminder_text)
+            print("Telegram alert sent.")
+        except Exception as tel_err:
+            print(f"Failed to send Telegram: {tel_err}")
+        
+        print("System halted.")
+        
+        # SAFE EXIT LOGIC:
+        # Check if running in Jupyter (ipykernel) or standard Python
+        if 'ipykernel' in sys.modules:
+            # In Jupyter, return quietly to avoid messy red error boxes
+            return 
+        else:
+            # In a .py script, exit with status 1 for system signaling
+            sys.exit(1)
+
 
 # =======================================
 # 6. RUN MAIN FUNCTION
 # =======================================
 if __name__ == "__main__":   
     nest_asyncio.apply()
-    asyncio.run(send_notifications_reminders())
+    asyncio.run(check_and_run())

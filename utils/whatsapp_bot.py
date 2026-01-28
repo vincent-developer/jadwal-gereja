@@ -132,3 +132,26 @@ class WhatsAppBot:
 
         # 4️⃣ Success
         return response.json()
+
+    def get_status(self) -> dict:
+        """
+        Check the current connection status of the WhatsApp bot.
+        Endpoint: /status (berdasarkan dokumentasi vincent-developer)
+        """
+        try:
+            # Menggunakan endpoint /status untuk mengecek session
+            status_url = self.base_url.replace("/send-message", "/status") if "/send-message" in self.base_url else f"{self.base_url}/status"
+            
+            response = requests.get(
+                status_url,
+                headers=self.headers,
+                timeout=10
+            )
+        except requests.exceptions.RequestException as e:
+            raise WhatsAppNetworkError(f"Network error while fetching status: {e}")
+
+        if response.status_code != 200:
+            error_message = BAILEYS_ERROR_MAP.get(response.status_code, response.text)
+            raise WhatsAppAPIError(status_code=response.status_code, message=error_message)
+
+        return response.json()
