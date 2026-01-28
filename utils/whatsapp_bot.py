@@ -6,6 +6,37 @@ from dotenv import load_dotenv, find_dotenv
 # Load .env
 load_dotenv(find_dotenv())
 
+BAILEYS_ERROR_MAP = {
+    400: "Bad Request (payload invalid)",
+    401: "Unauthorized (token invalid)",
+    403: "Forbidden",
+    404: "Endpoint not found",
+    409: "WhatsApp session not ready / conflict",
+    429: "Rate limit exceeded",
+    500: "Internal server error (Baileys crash)",
+}
+
+class WhatsAppSendError(Exception):
+    """Base exception for WhatsApp send failures."""
+    pass
+
+
+class WhatsAppValidationError(WhatsAppSendError):
+    pass
+
+
+class WhatsAppAPIError(WhatsAppSendError):
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"API Error {status_code}: {message}")
+
+
+class WhatsAppNetworkError(WhatsAppSendError):
+    pass
+
+
+
 
 class WhatsAppBot:
     """WhatsApp REST API Client with number validation."""
@@ -56,20 +87,27 @@ class WhatsAppBot:
 
         return cleaned
 
-    def send(self, number: str, message: str):
-        """Send a WhatsApp message."""
+    def send(self, number: str, message: str) -> dict:
+        """Send a WhatsApp message via Baileys API.
 
+        :raises WhatsAppValidationError
+        :raises WhatsAppNetworkError
+        :raises WhatsAppAPIError
+        :return: response JSON
+        """
+
+        # 1️⃣ Normalize & validate number
         try:
             formatted = self.normalize_number(number)
         except ValueError as e:
-            print(f"❌ Number Validation Failed: {e}")
-            return None
+            raise WhatsAppValidationError(str(e))
 
         payload = {
             "number": formatted,
             "message": message
         }
 
+        # 2️⃣ HTTP request
         try:
             response = requests.post(
                 self.base_url,
@@ -77,14 +115,43 @@ class WhatsAppBot:
                 headers=self.headers,
                 timeout=10
             )
-
-            if response.status_code == 200:
-                print(f"✅ Sent WhatsApp to {formatted}")
-                return response.json()
-
-            print(f"⚠️ API Error {response.status_code}: {response.text}")
-            return None
-
         except requests.exceptions.RequestException as e:
-            print(f"❌ Network Error: {e}")
-            return None
+            raise WhatsAppNetworkError(f"Network error: {e}")
+
+        # 3️⃣ Handle non-200 response
+        if response.status_code != 200:
+            error_message = BAILEYS_ERROR_MAP.get(
+                response.status_code,
+                response.text
+            )
+
+            raise WhatsAppAPIError(
+                status_code=response.status_code,
+                message=error_message
+            )
+
+        # 4️⃣ Success
+        return response.json()
+
+    def get_status(self) -> dict:
+        """
+        Check the current connection status of the WhatsApp bot.
+        Endpoint: /status (berdasarkan dokumentasi vincent-developer)
+        """
+        try:
+            # Menggunakan endpoint /status untuk mengecek session
+            status_url = self.base_url.replace("/send-message", "/status") if "/send-message" in self.base_url else f"{self.base_url}/status"
+            
+            response = requests.get(
+                status_url,
+                headers=self.headers,
+                timeout=10
+            )
+        except requests.exceptions.RequestException as e:
+            raise WhatsAppNetworkError(f"Network error while fetching status: {e}")
+
+        if response.status_code != 200:
+            error_message = BAILEYS_ERROR_MAP.get(response.status_code, response.text)
+            raise WhatsAppAPIError(status_code=response.status_code, message=error_message)
+
+        return response.json()
