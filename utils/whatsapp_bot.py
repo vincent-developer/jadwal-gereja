@@ -6,80 +6,152 @@ from dotenv import load_dotenv, find_dotenv
 # Load .env
 load_dotenv(find_dotenv())
 
+BAILEYS_ERROR_MAP = {
+    400: "Bad Request (payload invalid)",
+    401: "Unauthorized (token invalid)",
+    403: "Forbidden",
+    404: "Endpoint not found",
+    409: "WhatsApp session not ready / conflict",
+    429: "Rate limit exceeded",
+    500: "Internal server error (Baileys crash)",
+}
+
+class WhatsAppSendError(Exception):
+    """Base exception for WhatsApp send failures."""
+    pass
+
+
+class WhatsAppValidationError(WhatsAppSendError):
+    pass
+
+
+class WhatsAppAPIError(WhatsAppSendError):
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"API Error {status_code}: {message}")
+
+
+class WhatsAppNetworkError(WhatsAppSendError):
+    pass
+
+
+
 
 class WhatsAppBot:
     """WhatsApp REST API Client with number validation."""
 
     def __init__(self):
         self.base_url = os.getenv("WHATSAPP_URL")
+        self.token = os.getenv("WHATSAPP_BOT_TOKEN")
 
         if not self.base_url:
             raise ValueError("WHATSAPP_URL not found in environment.")
 
+        if not self.token:
+            raise ValueError("WHATSAPP_BOT_TOKEN not found in environment.")
+
+        # Prepare headers once
+        self.headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+
     def normalize_number(self, number: str) -> str:
         """
         valid for indonesian number only
-        Validate and normalize phone number to format:
-        628xxxxxxxxx
+        Normalize phone number to format: 628xxxxxxxxx
         """
 
-        # Remove spaces, dash, parentheses, and keep digits + optional plus
         cleaned = re.sub(r"[^0-9+]", "", number)
 
-        # If it contains letters -> error
         if re.search(r"[A-Za-z]", cleaned):
             raise ValueError("Phone number must not contain letters.")
 
-        # Remove leading +
         cleaned = cleaned.lstrip("+")
 
-        # RULES:
-        # If starts with "0" -> replace with "62"
         if cleaned.startswith("0"):
             cleaned = "62" + cleaned[1:]
-
-        # If missing "62" but starts with 8 (ex: 812xxx)
         elif cleaned.startswith("8"):
             cleaned = "62" + cleaned
-
-        # If already starting with 62 → leave as is
         elif cleaned.startswith("62"):
-            pass  # Valid
-
+            pass
         else:
             raise ValueError(f"Invalid phone format: {number}")
 
-        # Final validation: must contain only numbers
         if not cleaned.isdigit():
             raise ValueError(f"Phone number contains invalid characters: {number}")
 
-        # Optional: minimum length check (WhatsApp typical: >= 10)
         if len(cleaned) < 10:
             raise ValueError(f"Phone number too short: {number}")
 
         return cleaned
 
-    def send(self, number: str, message: str):
-        """Send a WhatsApp message."""
+    def send(self, number: str, message: str) -> dict:
+        """Send a WhatsApp message via Baileys API.
 
+        :raises WhatsAppValidationError
+        :raises WhatsAppNetworkError
+        :raises WhatsAppAPIError
+        :return: response JSON
+        """
+
+        # 1️⃣ Normalize & validate number
         try:
             formatted = self.normalize_number(number)
         except ValueError as e:
-            print(f"❌ Number Validation Failed: {e}")
-            return None
+            raise WhatsAppValidationError(str(e))
 
-        payload = {"number": formatted, "message": message}
+        payload = {
+            "number": formatted,
+            "message": message
+        }
 
+        # 2️⃣ HTTP request
         try:
-            response = requests.post(self.base_url, json=payload, timeout=10)
-
-            if response.status_code == 200:
-                print(f"✅ Sent WhatsApp to {formatted}: {message}")
-                return response.json()
-            else:
-                print(f"⚠️ API responded with {response.status_code}: {response.text}")
-                return None
-
+            response = requests.post(
+                self.base_url,
+                json=payload,
+                headers=self.headers,
+                timeout=10
+            )
         except requests.exceptions.RequestException as e:
-            print(f"❌ Network Error: {e}")
-            return None
+            raise WhatsAppNetworkError(f"Network error: {e}")
+
+        # 3️⃣ Handle non-200 response
+        if response.status_code != 200:
+            error_message = BAILEYS_ERROR_MAP.get(
+                response.status_code,
+                response.text
+            )
+
+            raise WhatsAppAPIError(
+                status_code=response.status_code,
+                message=error_message
+            )
+
+        # 4️⃣ Success
+        return response.json()
+
+    def get_status(self) -> dict:
+        """
+        Check the current connection status of the WhatsApp bot.
+        Endpoint: /status (berdasarkan dokumentasi vincent-developer)
+        """
+        try:
+            # Menggunakan endpoint /status untuk mengecek session
+            status_url = self.base_url.replace("/send-message", "/status") if "/send-message" in self.base_url else f"{self.base_url}/status"
+            
+            response = requests.get(
+                status_url,
+                headers=self.headers,
+                timeout=10
+            )
+        except requests.exceptions.RequestException as e:
+            raise WhatsAppNetworkError(f"Network error while fetching status: {e}")
+
+        if response.status_code != 200:
+            error_message = BAILEYS_ERROR_MAP.get(response.status_code, response.text)
+            raise WhatsAppAPIError(status_code=response.status_code, message=error_message)
+
+        return response.json()
