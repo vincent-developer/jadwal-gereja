@@ -55,7 +55,6 @@ MASTER_SCHEDULE_SHEET_NAME = "Jadwal Pasdior"
 
 # Google Sheets - Database (output/storage)
 DATABASE_SPREADSHEET_ID = "1nqY5jNzJvsy7v37jnb-rlSDUNvsLYiuHq5-ryAW1Kxs"
-DATABASE_SCHEDULE_OUTPUT_SHEET_NAME = "jadwal"
 DATABASE_ORGANIST_SHEET_NAME = "Data Organis"
 DATABASE_LOG_SHEET_NAME = "Notification Chat Log"  # ini kan juga di database
 
