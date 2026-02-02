@@ -1,10 +1,7 @@
-import os
 import re
 import requests
-from dotenv import load_dotenv, find_dotenv
+from config.settings import WHATSAPP_BOT_TOKEN, WHATSAPP_URL
 
-# Load .env
-load_dotenv(find_dotenv())
 
 BAILEYS_ERROR_MAP = {
     400: "Bad Request (payload invalid)",
@@ -42,8 +39,8 @@ class WhatsAppBot:
     """WhatsApp REST API Client with number validation."""
 
     def __init__(self):
-        self.base_url = os.getenv("WHATSAPP_URL")
-        self.token = os.getenv("WHATSAPP_BOT_TOKEN")
+        self.base_url = WHATSAPP_URL
+        self.token = WHATSAPP_BOT_TOKEN
 
         if not self.base_url:
             raise ValueError("WHATSAPP_URL not found in environment.")
