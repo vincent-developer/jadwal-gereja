@@ -48,7 +48,10 @@ REMINDER_MESSAGE_TEMPLATE = (
     "Hi {name}, jadwal organis berikutnya adalah:\n"
     "{schedule_list}\n\n"
     "Untuk jadwal yang lebih update silahkan cek di link berikut:\n"
-    "https://linktr.ee/pasdiormabes"
+    "https://linktr.ee/pasdiormabes\n\n"
+    "Catatan:\n"
+    "- Jangan balas pesan ini. Jika ada kendala jadwal, silahkan diskusikan di grup WhatsApp.\n"
+    "- Sistem ini di-maintain secara volunteer oleh Vincent (vincent.koci.kusuma@gmail.com)"
 )
 
 WHATSAPP_ERROR_ALERT_TEMPLATE = (
