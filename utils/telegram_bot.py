@@ -1,16 +1,12 @@
-import os
-from dotenv import load_dotenv, find_dotenv
 from telegram import Bot
 from telegram.error import TelegramError
-
-# Load .env automatically (works from subfolders)
-load_dotenv(find_dotenv())
+from config.settings import TELEGRAM_BOT_TOKEN
 
 class TelegramBot:
     """Async Telegram bot helper for python-telegram-bot v20+."""
 
     def __init__(self, chat_id: str):
-        self.token = os.getenv("BOT_TOKEN")
+        self.token = TELEGRAM_BOT_TOKEN
         self.chat_id = chat_id
 
         if not self.token:
