@@ -53,9 +53,3 @@ REMINDER_MESSAGE_TEMPLATE = (
     "- Jangan balas pesan ini. Jika ada kendala jadwal, silahkan diskusikan di grup WhatsApp.\n"
     "- Sistem ini di-maintain secara volunteer oleh Vincent (vincent.koci.kusuma@gmail.com)"
 )
-
-WHATSAPP_ERROR_ALERT_TEMPLATE = (
-    "[{timestamp}]\n\n"
-    "WhatsApp API is unavailable.\n\n"
-    "Error:\n\"{error_msg}\""
-)

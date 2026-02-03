@@ -56,7 +56,8 @@ MASTER_SCHEDULE_SHEET_NAME = "Jadwal Pasdior"
 # Google Sheets - Database (output/storage)
 DATABASE_SPREADSHEET_ID = "1nqY5jNzJvsy7v37jnb-rlSDUNvsLYiuHq5-ryAW1Kxs"
 DATABASE_ORGANIST_SHEET_NAME = "Data Organis"
-DATABASE_LOG_SHEET_NAME = "Notification Chat Log"  # ini kan juga di database
+DATABASE_LOG_SHEET_NAME = "Notification Chat Log"
+# DATABASE_LOG_SHEET_NAME = "Notification Chat Log Stag"
 
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("BOT_TOKEN")
