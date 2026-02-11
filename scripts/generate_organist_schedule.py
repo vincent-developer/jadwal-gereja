@@ -168,9 +168,9 @@ def update_log(
         ]
     )
 
-def read_last_choir_log(gsheet: GoogleSheetsService, spreadsheet_id: str, whatsapp_no: str) -> dict | None:
+def read_last_choir_log(gsheet: GoogleSheetsService, spreadsheet_id: str, whatsapp_no: str, choir_name: str) -> dict | None:
     """
-    Return last matching choir log entry based on whatsapp_no.
+    Return last matching choir log entry based on whatsapp_no AND choir_name (composite key).
     If no match found, return None. If sheet not found, create and return None.
     """
     SHEET_NAME = DATABASE_LOG_CHOIR_SHEET_NAME
@@ -178,9 +178,10 @@ def read_last_choir_log(gsheet: GoogleSheetsService, spreadsheet_id: str, whatsa
     try:
         records = gsheet.read_all_records(spreadsheet_id, SHEET_NAME)
 
-        # Search from bottom to get the latest entry
+        # Search from bottom to get the latest entry matching BOTH whatsapp_no AND choir_name
         for row in reversed(records):
-            if is_number_match(row.get("Whatsapp No", ""), whatsapp_no, "whatsapp"):
+            if (is_number_match(row.get("Whatsapp No", ""), whatsapp_no, "whatsapp") and 
+                str(row.get("Koor", "")).strip().lower() == choir_name.strip().lower()):
                 return row
 
         return None
@@ -214,8 +215,8 @@ def update_choir_log(
     hash_value: str,
     status: str,
 ) -> None:
-    """Update or insert choir log entry ensuring only one record exists per whatsapp_no."""
-    SHEET_NAME = DATABASE_LOG_CHOIR_SHEET_NAME  # atau sesuaikan dengan konstanta yang kamu pakai
+    """Update or insert choir log entry ensuring only one record exists per (whatsapp_no, choir_name) composite key."""
+    SHEET_NAME = DATABASE_LOG_CHOIR_SHEET_NAME
 
     try:
         gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
@@ -238,9 +239,10 @@ def update_choir_log(
     records = gsheet.read_all_records(spreadsheet_id, SHEET_NAME)
     timestamp = datetime.now(ZoneInfo(JAKARTA_TZ)).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Search existing row
+    # Search existing row matching BOTH whatsapp_no AND choir_name
     for idx, row in enumerate(records, start=2):
-        if is_number_match(row.get("Whatsapp No"), whatsapp_no, "whatsapp"):
+        if (is_number_match(row.get("Whatsapp No"), whatsapp_no, "whatsapp") and
+            str(row.get("Koor", "")).strip().lower() == koor.strip().lower()):
             gsheet.update_row(
                 spreadsheet_id,
                 SHEET_NAME,
@@ -602,7 +604,7 @@ async def send_choir_notification_reminders():
             schedule_string = "\n".join(tanggal_list)
 
             reminder_text = REMINDER_MESSAGE_TEMPLATE_CHOIR.format(
-                coord_name=rec.coordinator_name.capitalize(),  
+                coord_name=(rec.coordinator_name or "Koordinator").capitalize(),  
                 choir_name=rec.choir_name.capitalize(),
                 schedule_list=schedule_string 
             )
@@ -616,8 +618,8 @@ async def send_choir_notification_reminders():
             # Notification by WhatsApp
             if rec.has_whatsapp():
                 previous_log = read_last_choir_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, rec.wa_number
-                    )
+                    gsheet, DATABASE_SPREADSHEET_ID, rec.wa_number, rec.choir_name
+                )
 
                 if previous_log and previous_log.get("Schedule Hash") == hash_value:
                     # Same schedule → skip sending
@@ -654,9 +656,6 @@ async def send_choir_notification_reminders():
                         )
                     except Exception as e:
                         print(f"⚠️ Failed to send Whatsapp to {rec.choir_name}: {e}", flush=True)
-                        # todo need adjust
-                        
-                        
                         update_choir_log(
                             gsheet,
                             DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
