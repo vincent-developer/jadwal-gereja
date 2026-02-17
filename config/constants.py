@@ -44,7 +44,7 @@ WEEKEND_DAYS = ["Sabtu", "Minggu", "Saturday", "Sunday"]
 # =======================================
 # MESSAGE TEMPLATES
 # =======================================
-REMINDER_MESSAGE_TEMPLATE = (
+REMINDER_MESSAGE_TEMPLATE_ORGANIST = (
     "Hi {name}, jadwal organis berikutnya adalah:\n"
     "{schedule_list}\n\n"
     "Untuk jadwal yang lebih update silahkan cek di link berikut:\n"
