@@ -23,7 +23,7 @@ from config.settings import (
     DATABASE_LOG_SHEET_NAME,
     DATABASE_LOG_CHOIR_SHEET_NAME
 )
-from config.constants import MONTH_MAP, LITURGICAL_YEAR_MAP, WEEKEND_DAYS, JAKARTA_TZ, REMINDER_MESSAGE_TEMPLATE, REMINDER_MESSAGE_TEMPLATE_CHOIR
+from config.constants import MONTH_MAP, LITURGICAL_YEAR_MAP, WEEKEND_DAYS, JAKARTA_TZ, REMINDER_MESSAGE_TEMPLATE_ORGANIST, REMINDER_MESSAGE_TEMPLATE_CHOIR
 from services.gsheet_service import GoogleSheetsService
 from utils.number import normalize_number
 from utils.telegram_bot import TelegramBot
@@ -461,12 +461,12 @@ async def send_organist_notification_reminders():
                     hari = format_date(row["Tanggal_dt"], "EEEE", locale="id")
                     tanggal = format_date(row["Tanggal_dt"], "d MMMM y", locale="id")
                     jam = str(row["Jam"]).strip() if pd.notnull(row["Jam"]) else ""
-                    koor = str(row["Koor"]).strip() if pd.notnull(row["Koor"]) else "-"
+                    koor = str(row.get("Koor", "")).strip() or "-"
                     tanggal_list.append(f"- {hari}, {tanggal} • {jam} (Koor: {koor})")
 
             schedule_string = "\n".join(tanggal_list)
 
-            reminder_text = REMINDER_MESSAGE_TEMPLATE.format(
+            reminder_text = REMINDER_MESSAGE_TEMPLATE_ORGANIST.format(
                 name=name.capitalize(),  
                 schedule_list=schedule_string 
             )
@@ -598,7 +598,7 @@ async def send_choir_notification_reminders():
                     hari = format_date(row["Tanggal_dt"], "EEEE", locale="id")
                     tanggal = format_date(row["Tanggal_dt"], "d MMMM y", locale="id")
                     jam = str(row["Jam"]).strip() if pd.notnull(row["Jam"]) else ""
-                    organist = str(row["Organis"]).strip() if pd.notnull(row["Organis"]) else "-"
+                    organist = str(row.get("Organis", "")).strip() or "-"
                     tanggal_list.append(f"- {hari}, {tanggal} • {jam} (Organist: {organist})")
 
             schedule_string = "\n".join(tanggal_list)
