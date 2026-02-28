@@ -19,15 +19,22 @@ class GoogleSheetsService:
         """Initialize Google Sheets client"""
         creds = get_google_credentials()
         self.client = gspread.authorize(creds)
+        self._spreadsheet_cache: dict = {}  # keyed by spreadsheet_id
+        self._worksheet_cache: dict = {}    # keyed by (spreadsheet_id, worksheet_name)
     
     def get_spreadsheet(self, spreadsheet_id: str):
-        """Get spreadsheet by ID"""
-        return self.client.open_by_key(spreadsheet_id)
+        """Get spreadsheet by ID (cached per session)"""
+        if spreadsheet_id not in self._spreadsheet_cache:
+            self._spreadsheet_cache[spreadsheet_id] = self.client.open_by_key(spreadsheet_id)
+        return self._spreadsheet_cache[spreadsheet_id]
     
     def get_worksheet(self, spreadsheet_id: str, worksheet_name: str):
-        """Get worksheet by name"""
-        spreadsheet = self.get_spreadsheet(spreadsheet_id)
-        return spreadsheet.worksheet(worksheet_name)
+        """Get worksheet by name (cached per session)"""
+        key = (spreadsheet_id, worksheet_name)
+        if key not in self._worksheet_cache:
+            spreadsheet = self.get_spreadsheet(spreadsheet_id)
+            self._worksheet_cache[key] = spreadsheet.worksheet(worksheet_name)
+        return self._worksheet_cache[key]
     
     def read_all_values(self, spreadsheet_id: str, worksheet_name: str) -> list:
         """Read all values from a worksheet"""
@@ -40,24 +47,62 @@ class GoogleSheetsService:
         return sheet.get_all_records()
     
     def get_or_create_worksheet(self, spreadsheet_id: str, worksheet_name: str, rows: int = 10, cols: int = 7):
-        """Get worksheet or create if not exists"""
+        """Get worksheet or create if not exists (result cached per session)"""
+        key = (spreadsheet_id, worksheet_name)
+        if key in self._worksheet_cache:
+            return self._worksheet_cache[key]
+        spreadsheet = self.get_spreadsheet(spreadsheet_id)
         try:
-            spreadsheet = self.get_spreadsheet(spreadsheet_id)
             sheet = spreadsheet.worksheet(worksheet_name)
-            return sheet
         except WorksheetNotFound:
-            spreadsheet = self.get_spreadsheet(spreadsheet_id)
             sheet = spreadsheet.add_worksheet(
                 title=worksheet_name,
                 rows=str(rows),
                 cols=str(cols)
             )
-            return sheet
+        self._worksheet_cache[key] = sheet
+        return sheet
     
     def append_row(self, spreadsheet_id: str, worksheet_name: str, values: list):
         """Append a row to worksheet"""
         sheet = self.get_worksheet(spreadsheet_id, worksheet_name)
         sheet.append_row(values)
+
+    def flush_log_writes(self, spreadsheet_id: str, worksheet_name: str, pending_writes: list) -> None:
+        """
+        Flush all deferred log writes in a single batch operation.
+        pending_writes is a list of dicts:
+          {"type": "update", "row": <int>, "values": <list>}
+          {"type": "append", "values": <list>}
+        All updates are batched into one batch_update call.
+        All appends are batched into one append_rows call.
+        """
+        if not pending_writes:
+            return
+
+        sheet = self.get_worksheet(spreadsheet_id, worksheet_name)
+
+        update_requests = []
+        append_rows_data = []
+
+        for entry in pending_writes:
+            if entry["type"] == "update":
+                num_cols = len(entry["values"])
+                end_col = chr(64 + num_cols)
+                update_requests.append({
+                    "range": f"A{entry['row']}:{end_col}{entry['row']}",
+                    "values": [entry["values"]]
+                })
+            elif entry["type"] == "append":
+                append_rows_data.append(entry["values"])
+
+        if update_requests:
+            sheet.batch_update(update_requests)
+
+        if append_rows_data:
+            sheet.append_rows(append_rows_data)
+
+        print(f"✅ Flushed {len(pending_writes)} log write(s) to '{worksheet_name}'", flush=True)
     
     def update_row(self, spreadsheet_id: str, worksheet_name: str, row_index: int, values: list):
         """Update specific row"""

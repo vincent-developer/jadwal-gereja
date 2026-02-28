@@ -68,42 +68,41 @@ def is_number_match(stored_number: str, input_number: str, platform: str) -> boo
         )
 
 
-def read_last_log(gsheet: GoogleSheetsService, spreadsheet_id: str, id: str, platform: str) -> dict | None:
+_LOG_ORGANIST_HEADERS = ["Timestamp", "Name", "Chat Id / Whatsapp No", "Message Preview", "Schedule Hash", "Status", "Platform"]
+_LOG_CHOIR_HEADERS = ["Timestamp", "Koor", "Nama Koordinator", "Whatsapp No", "Message Preview", "Schedule Hash", "Status"]
+
+
+def _load_log_sheet(gsheet: GoogleSheetsService, spreadsheet_id: str, sheet_name: str, headers: list) -> list:
+    """Load all records from a log sheet, creating it with headers if it does not exist."""
+    try:
+        return gsheet.read_all_records(spreadsheet_id, sheet_name)
+    except:
+        gsheet.get_or_create_worksheet(spreadsheet_id, sheet_name, rows=10, cols=7)
+        gsheet.append_row(spreadsheet_id, sheet_name, headers)
+        return []
+
+
+def read_last_log(
+    gsheet: GoogleSheetsService,
+    spreadsheet_id: str,
+    id: str,
+    platform: str,
+    records: list | None = None,
+) -> dict | None:
     """
     Return last matching log entry based on chat_id AND platform.
-    If no match found, return None. If sheet not found, create and return None.
+    Pass pre-loaded `records` to skip the sheet read (avoids redundant API call).
     """
-    SHEET_NAME = DATABASE_LOG_SHEET_NAME
+    if records is None:
+        records = _load_log_sheet(gsheet, spreadsheet_id, DATABASE_LOG_SHEET_NAME, _LOG_ORGANIST_HEADERS)
 
-    try:
-        records = gsheet.read_all_records(spreadsheet_id, SHEET_NAME)
+    for row in reversed(records):
+        if is_number_match(
+            row.get("Chat Id / Whatsapp No", ""), id, platform
+        ) and str(row.get("Platform", "")).strip().lower() == platform.strip().lower():
+            return row
 
-        # Search from bottom to get the latest entry
-        for row in reversed(records):
-            if is_number_match(
-                row.get("Chat Id / Whatsapp No", ""), id, platform
-            ) and str(row.get("Platform", "")).strip().lower() == platform.strip().lower():
-                return row
-
-        return None
-
-    except:
-        # Sheet doesn't exist → create new one
-        gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
-        gsheet.append_row(
-            spreadsheet_id,
-            SHEET_NAME,
-            [
-                "Timestamp",
-                "Name",
-                "Chat Id / Whatsapp No",
-                "Message Preview",
-                "Schedule Hash",
-                "Status",
-                "Platform",
-            ]
-        )
-        return None
+    return None
 
 
 def update_log(
@@ -115,94 +114,63 @@ def update_log(
     hash_value: str,
     status: str,
     platform: str,
-) -> None:
-    """Update or insert log entry ensuring only one record exists per id and platform."""
+    records: list | None = None,
+    pending_writes: list | None = None,
+) -> list:
+    """
+    Update or insert log entry. Pass pre-loaded `records` to skip re-reading the sheet.
+    Pass `pending_writes` list to defer the actual write — caller must call flush_log_writes() after the loop.
+    Returns the updated records list so the caller's in-memory cache stays in sync.
+    """
     SHEET_NAME = DATABASE_LOG_SHEET_NAME
 
-    try:
-        gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
-    except:
-        gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
-        gsheet.append_row(
-            spreadsheet_id,
-            SHEET_NAME,
-            [
-                "Timestamp",
-                "Name",
-                "Chat Id / Whatsapp No",
-                "Message Preview",
-                "Schedule Hash",
-                "Status",
-                "Platform",
-            ]
-        )
+    if records is None:
+        records = _load_log_sheet(gsheet, spreadsheet_id, SHEET_NAME, _LOG_ORGANIST_HEADERS)
 
-    records = gsheet.read_all_records(spreadsheet_id, SHEET_NAME)
-    timestamp = datetime.now(ZoneInfo(JAKARTA_TZ)).strftime("%Y-%m-%d %H:%M:%S")  # ✅ Pakai dari settings
+    timestamp = datetime.now(ZoneInfo(JAKARTA_TZ)).strftime("%Y-%m-%d %H:%M:%S")
+    normalized_id = id if platform == "telegram" else normalize_number(id)
+    new_values = [timestamp, name, normalized_id, preview, hash_value, status, platform]
 
     # Search existing row
     for idx, row in enumerate(records, start=2):
         if is_number_match(
             row.get("Chat Id / Whatsapp No"), id, platform
         ) and str(row.get("Platform")).strip().lower() == platform.strip().lower():
-            gsheet.update_row(
-                spreadsheet_id,
-                SHEET_NAME,
-                idx,
-                [timestamp, name, id if platform == "telegram" else normalize_number(id), preview, hash_value, status, platform]
-            )
-            return
+            if pending_writes is not None:
+                pending_writes.append({"type": "update", "row": idx, "values": new_values})
+            else:
+                gsheet.update_row(spreadsheet_id, SHEET_NAME, idx, new_values)
+            records[idx - 2] = dict(zip(_LOG_ORGANIST_HEADERS, new_values))
+            return records
 
-    # Insert new row if none found
-    gsheet.append_row(
-        spreadsheet_id,
-        SHEET_NAME,
-        [
-            timestamp,
-            name,
-            id if platform == "telegram" else normalize_number(id),
-            preview,
-            hash_value,
-            status,
-            platform,
-        ]
-    )
+    if pending_writes is not None:
+        pending_writes.append({"type": "append", "values": new_values})
+    else:
+        gsheet.append_row(spreadsheet_id, SHEET_NAME, new_values)
+    records.append(dict(zip(_LOG_ORGANIST_HEADERS, new_values)))
+    return records
 
-def read_last_choir_log(gsheet: GoogleSheetsService, spreadsheet_id: str, whatsapp_no: str, choir_name: str) -> dict | None:
+def read_last_choir_log(
+    gsheet: GoogleSheetsService,
+    spreadsheet_id: str,
+    whatsapp_no: str,
+    choir_name: str,
+    records: list | None = None,
+) -> dict | None:
     """
     Return last matching choir log entry based on whatsapp_no AND choir_name (composite key).
-    If no match found, return None. If sheet not found, create and return None.
+    Pass pre-loaded `records` to skip the sheet read (avoids redundant API call).
     """
-    SHEET_NAME = DATABASE_LOG_CHOIR_SHEET_NAME
+    if records is None:
+        records = _load_log_sheet(gsheet, spreadsheet_id, DATABASE_LOG_CHOIR_SHEET_NAME, _LOG_CHOIR_HEADERS)
 
-    try:
-        records = gsheet.read_all_records(spreadsheet_id, SHEET_NAME)
-
-        # Search from bottom to get the latest entry matching BOTH whatsapp_no AND choir_name
-        for row in reversed(records):
-            if (is_number_match(row.get("Whatsapp No", ""), whatsapp_no, "whatsapp") and 
+    # Search from bottom to get the latest entry matching BOTH whatsapp_no AND choir_name
+    for row in reversed(records):
+        if (is_number_match(row.get("Whatsapp No", ""), whatsapp_no, "whatsapp") and
                 str(row.get("Koor", "")).strip().lower() == choir_name.strip().lower()):
-                return row
+            return row
 
-        return None
-
-    except:
-        # Sheet doesn't exist → create new one
-        gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
-        gsheet.append_row(
-            spreadsheet_id,
-            SHEET_NAME,
-            [
-                "Timestamp",
-                "Koor",
-                "Nama Koordinator",
-                "Whatsapp No",
-                "Message Preview",
-                "Schedule Hash",
-                "Status",
-            ]
-        )
-        return None
+    return None
 
 
 def update_choir_log(
@@ -214,57 +182,39 @@ def update_choir_log(
     preview: str,
     hash_value: str,
     status: str,
-) -> None:
-    """Update or insert choir log entry ensuring only one record exists per (whatsapp_no, choir_name) composite key."""
+    records: list | None = None,
+    pending_writes: list | None = None,
+) -> list:
+    """
+    Update or insert choir log entry. Pass pre-loaded `records` to skip re-reading the sheet.
+    Pass `pending_writes` list to defer the actual write — caller must call flush_log_writes() after the loop.
+    Returns the updated records list so the caller's in-memory cache stays in sync.
+    """
     SHEET_NAME = DATABASE_LOG_CHOIR_SHEET_NAME
 
-    try:
-        gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
-    except:
-        gsheet.get_or_create_worksheet(spreadsheet_id, SHEET_NAME, rows=10, cols=7)
-        gsheet.append_row(
-            spreadsheet_id,
-            SHEET_NAME,
-            [
-                "Timestamp",
-                "Koor",
-                "Nama Koordinator",
-                "Whatsapp No",
-                "Message Preview",
-                "Schedule Hash",
-                "Status",
-            ]
-        )
+    if records is None:
+        records = _load_log_sheet(gsheet, spreadsheet_id, SHEET_NAME, _LOG_CHOIR_HEADERS)
 
-    records = gsheet.read_all_records(spreadsheet_id, SHEET_NAME)
     timestamp = datetime.now(ZoneInfo(JAKARTA_TZ)).strftime("%Y-%m-%d %H:%M:%S")
+    new_values = [timestamp, koor, nama_koordinator, normalize_number(whatsapp_no), preview, hash_value, status]
 
     # Search existing row matching BOTH whatsapp_no AND choir_name
     for idx, row in enumerate(records, start=2):
         if (is_number_match(row.get("Whatsapp No"), whatsapp_no, "whatsapp") and
-            str(row.get("Koor", "")).strip().lower() == koor.strip().lower()):
-            gsheet.update_row(
-                spreadsheet_id,
-                SHEET_NAME,
-                idx,
-                [timestamp, koor, nama_koordinator, normalize_number(whatsapp_no), preview, hash_value, status]
-            )
-            return
+                str(row.get("Koor", "")).strip().lower() == koor.strip().lower()):
+            if pending_writes is not None:
+                pending_writes.append({"type": "update", "row": idx, "values": new_values})
+            else:
+                gsheet.update_row(spreadsheet_id, SHEET_NAME, idx, new_values)
+            records[idx - 2] = dict(zip(_LOG_CHOIR_HEADERS, new_values))
+            return records
 
-    # Insert new row if none found
-    gsheet.append_row(
-        spreadsheet_id,
-        SHEET_NAME,
-        [
-            timestamp,
-            koor,
-            nama_koordinator,
-            normalize_number(whatsapp_no),
-            preview,
-            hash_value,
-            status,
-        ]
-    )
+    if pending_writes is not None:
+        pending_writes.append({"type": "append", "values": new_values})
+    else:
+        gsheet.append_row(spreadsheet_id, SHEET_NAME, new_values)
+    records.append(dict(zip(_LOG_CHOIR_HEADERS, new_values)))
+    return records
 
 
 
@@ -415,6 +365,12 @@ df_clean["Weekday"] = df_clean["Hari"].apply(
 async def send_organist_notification_reminders():
     print("🚀 Starting organist reminder process...\n", flush=True)
 
+    # Load organist log sheet once — reused across all organists (no repeated reads)
+    log_records = _load_log_sheet(
+        gsheet, DATABASE_SPREADSHEET_ID, DATABASE_LOG_SHEET_NAME, _LOG_ORGANIST_HEADERS
+    )
+    pending_writes: list = []  # deferred log writes, flushed in one batch after loop
+
     for rec in organists:
         name = rec.name
         chat_id = rec.telegram_chat_id  # Perhatikan nama field sesuai definisi Class
@@ -444,9 +400,9 @@ async def send_organist_notification_reminders():
         df_to_save = df_to_save[new_order]
 
         await asyncio.to_thread(
-            gsheet.save_dataframe, 
+            gsheet.save_dataframe,
             DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
-            f"Jadwal {name.capitalize()}", 
+            f"Jadwal {name.capitalize()}",
             df_to_save
         )
 
@@ -467,8 +423,8 @@ async def send_organist_notification_reminders():
             schedule_string = "\n".join(tanggal_list)
 
             reminder_text = REMINDER_MESSAGE_TEMPLATE_ORGANIST.format(
-                name=name.capitalize(),  
-                schedule_list=schedule_string 
+                name=name.capitalize(),
+                schedule_list=schedule_string
             )
 
             print(reminder_text, flush=True)
@@ -480,21 +436,24 @@ async def send_organist_notification_reminders():
             # Notification by WhatsApp
             if has_whatsapp:
                 previous_log = read_last_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, id=wa_number, platform="whatsapp"  # ✅ Pakai dari settings
+                    gsheet, DATABASE_SPREADSHEET_ID, id=wa_number, platform="whatsapp",
+                    records=log_records
                 )
 
                 if previous_log and previous_log.get("Schedule Hash") == hash_value:
                     # Same schedule → skip sending
                     print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
-                    update_log(
+                    log_records = update_log(
                         gsheet,
-                        DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                        DATABASE_SPREADSHEET_ID,
                         name,
                         id=wa_number,
                         preview=reminder_text[:100],
                         hash_value=hash_value,
                         status="skipped",
                         platform="whatsapp",
+                        records=log_records,
+                        pending_writes=pending_writes,
                     )
                 else:
                     try:
@@ -504,82 +463,101 @@ async def send_organist_notification_reminders():
                             f"📨 Whatsapp Reminder sent to {name} ({wa_number})",
                             flush=True,
                         )
-                        update_log(
+                        log_records = update_log(
                             gsheet,
-                            DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                            DATABASE_SPREADSHEET_ID,
                             name,
                             id=wa_number,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
                             status="sent",
                             platform="whatsapp",
+                            records=log_records,
+                            pending_writes=pending_writes,
                         )
                     except Exception as e:
                         print(f"⚠️ Failed to send Whatsapp to {name}: {e}", flush=True)
-                        update_log(
+                        log_records = update_log(
                             gsheet,
-                            DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                            DATABASE_SPREADSHEET_ID,
                             name,
                             id=wa_number,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
                             status=f"error: {e}",
                             platform="whatsapp",
+                            records=log_records,
+                            pending_writes=pending_writes,
                         )
 
             # Notification by Telegram
             if has_telegram:
                 previous_log = read_last_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, id=chat_id, platform="telegram"  # ✅ Pakai dari settings
+                    gsheet, DATABASE_SPREADSHEET_ID, id=chat_id, platform="telegram",
+                    records=log_records
                 )
 
                 if previous_log and previous_log.get("Schedule Hash") == hash_value:
                     # Same schedule → skip sending
                     print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
-                    update_log(
+                    log_records = update_log(
                         gsheet,
-                        DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                        DATABASE_SPREADSHEET_ID,
                         name,
                         id=chat_id,
                         preview=reminder_text[:100],
                         hash_value=hash_value,
                         status="skipped",
                         platform="telegram",
+                        records=log_records,
+                        pending_writes=pending_writes,
                     )
                 else:
                     try:
                         telegramBot = TelegramBot(chat_id=chat_id)
                         await telegramBot.send(reminder_text)
                         print(f"📨 Reminder sent to {name} ({chat_id})", flush=True)
-                        update_log(
+                        log_records = update_log(
                             gsheet,
-                            DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                            DATABASE_SPREADSHEET_ID,
                             name,
                             id=chat_id,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
                             status="sent",
                             platform="telegram",
+                            records=log_records,
+                            pending_writes=pending_writes,
                         )
                     except Exception as e:
                         print(f"⚠️ Failed to send Telegram to {name}: {e}", flush=True)
-                        update_log(
+                        log_records = update_log(
                             gsheet,
-                            DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                            DATABASE_SPREADSHEET_ID,
                             name,
                             id=chat_id,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
                             status=f"error: {e}",
                             platform="telegram",
+                            records=log_records,
+                            pending_writes=pending_writes,
                         )
         await asyncio.sleep(random.uniform(6, 15))
 
+    # Flush all log writes in one batch after the full loop
+    gsheet.flush_log_writes(DATABASE_SPREADSHEET_ID, DATABASE_LOG_SHEET_NAME, pending_writes)
     print("\n✅ All reminders processed!", flush=True)
 
 
 async def send_choir_notification_reminders():
     print("🚀 Starting Choir reminder process...\n", flush=True)
+
+    # Load choir log sheet once — reused across all choirs (no repeated reads)
+    choir_log_records = _load_log_sheet(
+        gsheet, DATABASE_SPREADSHEET_ID, DATABASE_LOG_CHOIR_SHEET_NAME, _LOG_CHOIR_HEADERS
+    )
+    choir_pending_writes: list = []  # deferred log writes, flushed in one batch after loop
 
     for rec in choirs:
         print(f"🔹 Processing {rec.choir_name}...", flush=True)
@@ -604,9 +582,9 @@ async def send_choir_notification_reminders():
             schedule_string = "\n".join(tanggal_list)
 
             reminder_text = REMINDER_MESSAGE_TEMPLATE_CHOIR.format(
-                coord_name=(rec.coordinator_name or "Koordinator").capitalize(),  
+                coord_name=(rec.coordinator_name or "Koordinator").capitalize(),
                 choir_name=rec.choir_name.capitalize(),
-                schedule_list=schedule_string 
+                schedule_list=schedule_string
             )
 
             print(reminder_text, flush=True)
@@ -618,22 +596,24 @@ async def send_choir_notification_reminders():
             # Notification by WhatsApp
             if rec.has_whatsapp():
                 previous_log = read_last_choir_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, rec.wa_number, rec.choir_name
+                    gsheet, DATABASE_SPREADSHEET_ID, rec.wa_number, rec.choir_name,
+                    records=choir_log_records
                 )
 
                 if previous_log and previous_log.get("Schedule Hash") == hash_value:
                     # Same schedule → skip sending
                     print(f"⏭ SKIPPED (duplicate schedule): {rec.choir_name}", flush=True)
-                    
-                    update_choir_log(
+                    choir_log_records = update_choir_log(
                         gsheet,
-                        DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                        DATABASE_SPREADSHEET_ID,
                         rec.choir_name,
                         rec.coordinator_name,
                         rec.wa_number,
                         preview=reminder_text[:100],
                         hash_value=hash_value,
                         status="skipped",
+                        records=choir_log_records,
+                        pending_writes=choir_pending_writes,
                     )
                 else:
                     try:
@@ -643,31 +623,36 @@ async def send_choir_notification_reminders():
                             f"📨 Whatsapp Reminder sent to {rec.choir_name} ({rec.wa_number})",
                             flush=True,
                         )
-                        
-                        update_choir_log(
+                        choir_log_records = update_choir_log(
                             gsheet,
-                            DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                            DATABASE_SPREADSHEET_ID,
                             rec.choir_name,
                             rec.coordinator_name,
                             rec.wa_number,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
                             status="sent",
+                            records=choir_log_records,
+                            pending_writes=choir_pending_writes,
                         )
                     except Exception as e:
                         print(f"⚠️ Failed to send Whatsapp to {rec.choir_name}: {e}", flush=True)
-                        update_choir_log(
+                        choir_log_records = update_choir_log(
                             gsheet,
-                            DATABASE_SPREADSHEET_ID,  # ✅ Pakai dari settings
+                            DATABASE_SPREADSHEET_ID,
                             rec.choir_name,
                             rec.coordinator_name,
                             rec.wa_number,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
-                            status=f"error: {e}"
+                            status=f"error: {e}",
+                            records=choir_log_records,
+                            pending_writes=choir_pending_writes,
                         )
         await asyncio.sleep(random.uniform(6, 15))
 
+    # Flush all choir log writes in one batch after the full loop
+    gsheet.flush_log_writes(DATABASE_SPREADSHEET_ID, DATABASE_LOG_CHOIR_SHEET_NAME, choir_pending_writes)
     print("\n✅ All choir reminders processed!", flush=True)
 
 
