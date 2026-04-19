@@ -9,28 +9,21 @@ from typing import Optional
 
 from config.constants import BAPA_KAMI_VERSIONS, ORDINARIUM_TYPES
 
-from utils.string import (
-    collapse_space_before_trailing_digits,
-    extract_plus_delimited_pair,
-    match_canonical_choice,
-)
+from utils.string import extract_plus_delimited_pair, match_canonical_choice
 
 
 def parse_ordinarium_type(schedule_text: str) -> Optional[str]:
     """
-    Extract the ordinarium mass type from a schedule string and return it in slug form.
+    Extract the ordinarium mass type from a schedule string.
 
-    Example: ``Sabtu (Misa Raya 2 + PS 405)`` -> ``misa raya2`` (space before the trailing
-    number is removed; spelling follows ``ORDINARIUM_TYPES``).
+    Returns the canonical label from ``ORDINARIUM_TYPES`` (same spelling and spacing,
+    e.g. ``misa kita 2``, ``misa raya 2``).
     """
     pair = extract_plus_delimited_pair(schedule_text)
     if pair is None:
         return None
     left, _ = pair
-    canonical = match_canonical_choice(left, ORDINARIUM_TYPES)
-    if canonical is None:
-        return None
-    return collapse_space_before_trailing_digits(canonical)
+    return match_canonical_choice(left, ORDINARIUM_TYPES)
 
 
 def parse_bapa_kami_version(schedule_text: str) -> Optional[str]:
