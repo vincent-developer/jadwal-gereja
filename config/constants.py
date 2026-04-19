@@ -63,3 +63,22 @@ REMINDER_MESSAGE_TEMPLATE_CHOIR = (
     "- Jangan balas pesan ini. Jika ada kendala jadwal, silahkan diskusikan di grup WhatsApp.\n"
     "- Sistem ini di-maintain secara volunteer oleh Vincent (vincent.koci.kusuma@gmail.com)"
 )
+
+# Daftar Jenis Lagu (Ordinarium)
+ORDINARIUM_TYPES = [
+    "laudasion", 
+    "misa kita 2", 
+    "misa kita 4", 
+    "misa manado", 
+    "misa raya 2"
+]
+
+# Daftar Versi Bapa Kami
+BAPA_KAMI_VERSIONS = [
+    "ps 404", 
+    "ps 405", 
+    "konvennas", 
+    "putut", 
+    "totok", 
+    "cbd"
+]
