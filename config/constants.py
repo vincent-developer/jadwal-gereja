@@ -44,23 +44,12 @@ WEEKEND_DAYS = ["Sabtu", "Minggu", "Saturday", "Sunday"]
 # =======================================
 # MESSAGE TEMPLATES
 # =======================================
-REMINDER_MESSAGE_TEMPLATE_ORGANIST = (
-    "Hi {name}, jadwal organis berikutnya adalah:\n"
-    "{schedule_list}\n\n"
-    "Untuk jadwal yang lebih update silahkan cek di link berikut:\n"
-    "https://linktr.ee/pasdiormabes\n\n"
+# Shared footer for highlight-card reminder messages (organist & choir).
+REMINDER_HIGHLIGHT_FOOTER = (
+    "---\n"
+    "Cek jadwal lebih update di: https://linktr.ee/pasdiormabes\n\n"
     "Catatan:\n"
-    "- Jangan balas pesan ini. Jika ada kendala jadwal, silahkan diskusikan di grup WhatsApp.\n"
-    "- Sistem ini di-maintain secara volunteer oleh Vincent (vincent.koci.kusuma@gmail.com)"
-)
-
-REMINDER_MESSAGE_TEMPLATE_CHOIR = (
-    "Hi {coord_name}, jadwal pasdior {choir_name} berikutnya adalah:\n"
-    "{schedule_list}\n\n"
-    "Untuk jadwal yang lebih update silahkan cek di link berikut:\n"
-    "https://linktr.ee/pasdiormabes\n\n"
-    "Catatan:\n"
-    "- Jangan balas pesan ini. Jika ada kendala jadwal, silahkan diskusikan di grup WhatsApp.\n"
+    "- Jangan balas pesan ini. Kendala jadwal bisa didiskusikan di grup WhatsApp.\n"
     "- Sistem ini di-maintain secara volunteer oleh Vincent (vincent.koci.kusuma@gmail.com)"
 )
 

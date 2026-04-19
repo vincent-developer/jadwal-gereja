@@ -1,6 +1,10 @@
 import asyncio
+import hashlib
+import os
 import sys
 import random
+from pathlib import Path
+from string import capwords
 import nest_asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -8,12 +12,14 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from babel.dates import format_date
 from dotenv import find_dotenv, load_dotenv
-from typing import List
+from typing import List, Any
 
 # =======================================
 # ENVIRONMENT SETUP & IMPORTS
 # =======================================
-sys.path.append("..")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 from config.settings import (
     MASTER_SPREADSHEET_ID,
     MASTER_SCHEDULE_SHEET_NAME,
@@ -23,9 +29,16 @@ from config.settings import (
     DATABASE_LOG_SHEET_NAME,
     DATABASE_LOG_CHOIR_SHEET_NAME
 )
-from config.constants import MONTH_MAP, LITURGICAL_YEAR_MAP, WEEKEND_DAYS, JAKARTA_TZ, REMINDER_MESSAGE_TEMPLATE_ORGANIST, REMINDER_MESSAGE_TEMPLATE_CHOIR
+from config.constants import (
+    MONTH_MAP,
+    LITURGICAL_YEAR_MAP,
+    WEEKEND_DAYS,
+    JAKARTA_TZ,
+    REMINDER_HIGHLIGHT_FOOTER,
+)
 from services.gsheet_service import GoogleSheetsService
 from utils.number import normalize_number
+from utils.schedule_parse import parse_bapa_kami_version, parse_ordinarium_type
 from utils.telegram_bot import TelegramBot
 from utils.whatsapp_bot import (
     WhatsAppBot,
@@ -36,6 +49,12 @@ from models import Organist, Choir
 
 
 load_dotenv(find_dotenv())
+
+
+def skip_whatsapp() -> bool:
+    """When true (env ``SKIP_WHATSAPP=1``), skip WhatsApp API checks and all WA sends."""
+    return os.environ.get("SKIP_WHATSAPP", "").strip().lower() in ("1", "true", "yes")
+
 
 # =======================================
 # 1. HELPER FUNCTIONS
@@ -55,6 +74,164 @@ def liturgical_year(date: datetime) -> str:
     first_advent = get_first_advent(year)
     lit_year = year + 1 if date >= first_advent else year
     return LITURGICAL_YEAR_MAP[lit_year % 3]  # ✅ Pakai dari constants
+
+
+def _pad_row_to_len(row: list, length: int) -> list:
+    """Right-pad a sheet row with empty strings up to ``length`` cells."""
+    r = list(row)
+    while len(r) < length:
+        r.append("")
+    return r[:length]
+
+
+def _info_cell_text(info: Any) -> str:
+    if info is None:
+        return ""
+    if isinstance(info, float) and pd.isna(info):
+        return ""
+    return str(info).strip()
+
+
+def format_highlight_song_value(raw: str) -> str:
+    """Display label for Ordinarium / Bapa Kami in highlight cards (e.g. ``ps 404`` -> ``PS 404``)."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if s.lower().startswith("ps "):
+        return "PS " + s[3:].strip()
+    return capwords(s)
+
+
+def _jam_display(row: Any) -> str:
+    j = row.get("Jam") if hasattr(row, "get") else getattr(row, "Jam", "")
+    if j is None or (isinstance(j, float) and pd.isna(j)):
+        return ""
+    return str(j).strip()
+
+
+def _datetime_parts(row: Any) -> tuple[str, str, str] | None:
+    """Return (hari_id, tanggal_id, jam) from a schedule row, or None if date invalid."""
+    dt = row["tgl-format"] if hasattr(row, "__getitem__") else row.get("tgl-format")
+    if dt is None or (isinstance(dt, float) and pd.isna(dt)):
+        return None
+    hari = format_date(dt, "EEEE", locale="id")
+    tanggal = format_date(dt, "d MMMM y", locale="id")
+    return hari, tanggal, _jam_display(row)
+
+
+def _highlight_date_line(hari: str, tanggal: str, jam: str) -> str:
+    if jam:
+        return f"📌 *{hari}, {tanggal} • {jam}*"
+    return f"📌 *{hari}, {tanggal}*"
+
+
+def _song_lines_from_info(info: Any) -> list[str]:
+    """🎵 lines for the main highlight only (canonical values, display-formatted)."""
+    text = _info_cell_text(info)
+    if not text:
+        return []
+    ord_type = parse_ordinarium_type(text)
+    bapa = parse_bapa_kami_version(text)
+    out: list[str] = []
+    if ord_type:
+        out.append(f"🎵 Ordinarium: {format_highlight_song_value(ord_type)}")
+    if bapa:
+        out.append(f"🎵 Bapa Kami: {format_highlight_song_value(bapa)}")
+    return out
+
+
+def build_organist_highlight_reminder(name: str, next_three: Any) -> str:
+    """
+    WhatsApp/Telegram highlight card for organists: nearest schedule in full detail;
+    at most two following lines without song details.
+    """
+    rows: list[Any] = [r for _, r in next_three.iterrows() if _datetime_parts(r) is not None]
+    if not rows:
+        return ""
+
+    name_display = (name or "").strip().capitalize()
+    lines: list[str] = [
+        f"Hi {name_display}, berikut adalah detail jadwal organis kamu yang terdekat:",
+        "",
+    ]
+    first = rows[0]
+    hari, tanggal, jam = _datetime_parts(first)  # type: ignore[misc]
+    koor_raw = str(first.get("Koor", "")).strip() or "-"
+    koor_show = capwords(koor_raw) if koor_raw != "-" else "-"
+    lines.append(_highlight_date_line(hari, tanggal, jam))
+    lines.append(f"👥 Koor: {koor_show}")
+    lines.extend(_song_lines_from_info(first.get("Info")))
+
+    if len(rows) > 1:
+        lines += ["", "*2 Jadwal Berikutnya:*"]
+        upcoming: list[str] = []
+        for r in rows[1:3]:
+            parts = _datetime_parts(r)
+            if not parts:
+                continue
+            h, t, j = parts
+            k = str(r.get("Koor", "")).strip() or "-"
+            k_disp = capwords(k) if k != "-" else "-"
+            if j:
+                upcoming.append(f"{h}, {t} • {j} (Koor: {k_disp})")
+            else:
+                upcoming.append(f"{h}, {t} (Koor: {k_disp})")
+        lines.extend(f"• {u}" for u in upcoming)
+
+    lines += ["", REMINDER_HIGHLIGHT_FOOTER]
+    return "\n".join(lines)
+
+
+def build_choir_highlight_reminder(
+    coordinator_name: str,
+    choir_name: str,
+    next_three: Any,
+) -> str:
+    """
+    WhatsApp/Telegram highlight card for choirs: nearest schedule in full detail;
+    at most two following lines without song details.
+    """
+    rows: list[Any] = [r for _, r in next_three.iterrows() if _datetime_parts(r) is not None]
+    if not rows:
+        return ""
+
+    coord_display = (coordinator_name or "Koordinator").strip().capitalize()
+    choir_display = capwords((choir_name or "").strip())
+    lines: list[str] = [
+        f"Hi {coord_display}, berikut adalah detail jadwal pelayanan *{choir_display}* yang terdekat:",
+        "",
+    ]
+    first = rows[0]
+    hari, tanggal, jam = _datetime_parts(first)  # type: ignore[misc]
+    org_raw = str(first.get("Organis", "")).strip() or "-"
+    org_show = org_raw if org_raw == "-" else capwords(org_raw)
+    lines.append(_highlight_date_line(hari, tanggal, jam))
+    lines.append(f"🎹 Organis: {org_show}")
+    lines.extend(_song_lines_from_info(first.get("Info")))
+
+    if len(rows) > 1:
+        lines += ["", "*2 Jadwal Berikutnya:*"]
+        upcoming: list[str] = []
+        for r in rows[1:3]:
+            parts = _datetime_parts(r)
+            if not parts:
+                continue
+            h, t, j = parts
+            o = str(r.get("Organis", "")).strip() or "-"
+            o_disp = o if o == "-" else capwords(o)
+            if j:
+                upcoming.append(f"{h}, {t} • {j} (Organis: {o_disp})")
+            else:
+                upcoming.append(f"{h}, {t} (Organis: {o_disp})")
+        lines.extend(f"• {u}" for u in upcoming)
+
+    lines += ["", REMINDER_HIGHLIGHT_FOOTER]
+    return "\n".join(lines)
+
+
+def reminder_message_hash(reminder_text: str) -> str:
+    """Stable hash for log deduplication when message body changes."""
+    return hashlib.sha256(reminder_text.encode("utf-8")).hexdigest()
 
 
 def is_number_match(stored_number: str, input_number: str, platform: str) -> bool:
@@ -290,15 +467,21 @@ for row in all_choir_data[1:]:
 # =======================================
 all_data = gsheet.read_all_values(MASTER_SPREADSHEET_ID, MASTER_SCHEDULE_SHEET_NAME)  # ✅ Pakai dari settings
 
-# Extract main data columns
-data = [row[1:11] for row in all_data[4:] if len(row) >= 11]
-df = pd.DataFrame(data, columns=["B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]).copy()
+# Extract main data columns A–K (A = liturgy info for schedule_parse; B–K as before)
+data = []
+for row in all_data[4:]:
+    if len(row) < 10:
+        continue
+    data.append(_pad_row_to_len(row, 11))
+
+_df_cols = ["Info", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
+df = pd.DataFrame(data, columns=_df_cols).copy()
 
 # Override columns F,G if J,K are filled
 mask_j = df["J"].astype(str).str.strip() != ""
 df.loc[mask_j, ["F", "G"]] = df.loc[mask_j, ["J", "K"]].values
 # cleaning unused field
-df = df[["B", "C", "D", "E", "F", "G"]]
+df = df[["Info", "B", "C", "D", "E", "F", "G"]]
 
 
 target_date = datetime(datetime.now().year, 12, 25)
@@ -309,7 +492,8 @@ if today < target_date:
     df_extra = pd.DataFrame(data_extra, columns=["O", "P", "Q", "R"])
     df_extra["B"], df_extra["C"], df_extra["F"], df_extra["G"] = df_extra["O"], df_extra["P"], df_extra["Q"], df_extra["R"]
     df_extra["D"], df_extra["E"] = "", ""
-    df_extra = df_extra[["B", "C", "D", "E", "F", "G"]]
+    df_extra["Info"] = ""
+    df_extra = df_extra[["Info", "B", "C", "D", "E", "F", "G"]]
 
     # Merge both sections
     df_all = pd.concat([df, df_extra], ignore_index=True)
@@ -338,8 +522,9 @@ df_all = (
 )
 
 # Clean and standardize columns
-df_clean = df_all[["B", "C", "D", "E", "F", "G", "B_dt"]].copy()
+df_clean = df_all[["Info", "B", "C", "D", "E", "F", "G", "B_dt"]].copy()
 df_clean.columns = [
+    "Info",
     "Tanggal",
     "Jam",
     "Anamnesis",
@@ -390,6 +575,7 @@ async def send_organist_notification_reminders():
             "Hari",
             "Tanggal",
             "Jam",
+            "Info",
             "Anamnesis",
             "Cara Tobat",
             "Koor",
@@ -411,58 +597,25 @@ async def send_organist_notification_reminders():
             next_three = filter_df.head(3).copy()
             next_three["Tanggal_dt"] = next_three["tgl-format"]
 
-            tanggal_list = []
-            for _, row in next_three.iterrows():
-                if pd.notnull(row["Tanggal_dt"]):
-                    hari = format_date(row["Tanggal_dt"], "EEEE", locale="id")
-                    tanggal = format_date(row["Tanggal_dt"], "d MMMM y", locale="id")
-                    jam = str(row["Jam"]).strip() if pd.notnull(row["Jam"]) else ""
-                    koor = str(row.get("Koor", "")).strip() or "-"
-                    tanggal_list.append(f"- {hari}, {tanggal} • {jam} (Koor: {koor})")
+            reminder_text = build_organist_highlight_reminder(name, next_three)
+            if not reminder_text:
+                print(f"⚠️ Skipping notifications for {name}: no valid schedule dates.", flush=True)
+            else:
+                print(reminder_text, flush=True)
+                print("=" * 60, flush=True)
 
-            schedule_string = "\n".join(tanggal_list)
+                hash_value = reminder_message_hash(reminder_text)
 
-            reminder_text = REMINDER_MESSAGE_TEMPLATE_ORGANIST.format(
-                name=name.capitalize(),
-                schedule_list=schedule_string
-            )
-
-            print(reminder_text, flush=True)
-            print("=" * 60, flush=True)
-
-            # Create schedule hash based on dates & times
-            hash_value = "|".join(tanggal_list)
-
-            # Notification by WhatsApp
-            if has_whatsapp:
-                previous_log = read_last_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, id=wa_number, platform="whatsapp",
-                    records=log_records
-                )
-
-                if previous_log and previous_log.get("Schedule Hash") == hash_value:
-                    # Same schedule → skip sending
-                    print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
-                    log_records = update_log(
-                        gsheet,
-                        DATABASE_SPREADSHEET_ID,
-                        name,
-                        id=wa_number,
-                        preview=reminder_text[:100],
-                        hash_value=hash_value,
-                        status="skipped",
-                        platform="whatsapp",
-                        records=log_records,
-                        pending_writes=pending_writes,
+                # Notification by WhatsApp
+                if has_whatsapp and not skip_whatsapp():
+                    previous_log = read_last_log(
+                        gsheet, DATABASE_SPREADSHEET_ID, id=wa_number, platform="whatsapp",
+                        records=log_records
                     )
-                else:
-                    try:
-                        whatsAppBot = WhatsAppBot()
-                        whatsAppBot.send(wa_number, reminder_text)
-                        print(
-                            f"📨 Whatsapp Reminder sent to {name} ({wa_number})",
-                            flush=True,
-                        )
+
+                    if previous_log and previous_log.get("Schedule Hash") == hash_value:
+                        # Same schedule → skip sending
+                        print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
                         log_records = update_log(
                             gsheet,
                             DATABASE_SPREADSHEET_ID,
@@ -470,53 +623,56 @@ async def send_organist_notification_reminders():
                             id=wa_number,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
-                            status="sent",
+                            status="skipped",
                             platform="whatsapp",
                             records=log_records,
                             pending_writes=pending_writes,
                         )
-                    except Exception as e:
-                        print(f"⚠️ Failed to send Whatsapp to {name}: {e}", flush=True)
-                        log_records = update_log(
-                            gsheet,
-                            DATABASE_SPREADSHEET_ID,
-                            name,
-                            id=wa_number,
-                            preview=reminder_text[:100],
-                            hash_value=hash_value,
-                            status=f"error: {e}",
-                            platform="whatsapp",
-                            records=log_records,
-                            pending_writes=pending_writes,
-                        )
+                    else:
+                        try:
+                            whatsAppBot = WhatsAppBot()
+                            whatsAppBot.send(wa_number, reminder_text)
+                            print(
+                                f"📨 Whatsapp Reminder sent to {name} ({wa_number})",
+                                flush=True,
+                            )
+                            log_records = update_log(
+                                gsheet,
+                                DATABASE_SPREADSHEET_ID,
+                                name,
+                                id=wa_number,
+                                preview=reminder_text[:100],
+                                hash_value=hash_value,
+                                status="sent",
+                                platform="whatsapp",
+                                records=log_records,
+                                pending_writes=pending_writes,
+                            )
+                        except Exception as e:
+                            print(f"⚠️ Failed to send Whatsapp to {name}: {e}", flush=True)
+                            log_records = update_log(
+                                gsheet,
+                                DATABASE_SPREADSHEET_ID,
+                                name,
+                                id=wa_number,
+                                preview=reminder_text[:100],
+                                hash_value=hash_value,
+                                status=f"error: {e}",
+                                platform="whatsapp",
+                                records=log_records,
+                                pending_writes=pending_writes,
+                            )
 
-            # Notification by Telegram
-            if has_telegram:
-                previous_log = read_last_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, id=chat_id, platform="telegram",
-                    records=log_records
-                )
-
-                if previous_log and previous_log.get("Schedule Hash") == hash_value:
-                    # Same schedule → skip sending
-                    print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
-                    log_records = update_log(
-                        gsheet,
-                        DATABASE_SPREADSHEET_ID,
-                        name,
-                        id=chat_id,
-                        preview=reminder_text[:100],
-                        hash_value=hash_value,
-                        status="skipped",
-                        platform="telegram",
-                        records=log_records,
-                        pending_writes=pending_writes,
+                # Notification by Telegram
+                if has_telegram:
+                    previous_log = read_last_log(
+                        gsheet, DATABASE_SPREADSHEET_ID, id=chat_id, platform="telegram",
+                        records=log_records
                     )
-                else:
-                    try:
-                        telegramBot = TelegramBot(chat_id=chat_id)
-                        await telegramBot.send(reminder_text)
-                        print(f"📨 Reminder sent to {name} ({chat_id})", flush=True)
+
+                    if previous_log and previous_log.get("Schedule Hash") == hash_value:
+                        # Same schedule → skip sending
+                        print(f"⏭ SKIPPED (duplicate schedule): {name}", flush=True)
                         log_records = update_log(
                             gsheet,
                             DATABASE_SPREADSHEET_ID,
@@ -524,25 +680,42 @@ async def send_organist_notification_reminders():
                             id=chat_id,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
-                            status="sent",
+                            status="skipped",
                             platform="telegram",
                             records=log_records,
                             pending_writes=pending_writes,
                         )
-                    except Exception as e:
-                        print(f"⚠️ Failed to send Telegram to {name}: {e}", flush=True)
-                        log_records = update_log(
-                            gsheet,
-                            DATABASE_SPREADSHEET_ID,
-                            name,
-                            id=chat_id,
-                            preview=reminder_text[:100],
-                            hash_value=hash_value,
-                            status=f"error: {e}",
-                            platform="telegram",
-                            records=log_records,
-                            pending_writes=pending_writes,
-                        )
+                    else:
+                        try:
+                            telegramBot = TelegramBot(chat_id=chat_id)
+                            await telegramBot.send(reminder_text)
+                            print(f"📨 Reminder sent to {name} ({chat_id})", flush=True)
+                            log_records = update_log(
+                                gsheet,
+                                DATABASE_SPREADSHEET_ID,
+                                name,
+                                id=chat_id,
+                                preview=reminder_text[:100],
+                                hash_value=hash_value,
+                                status="sent",
+                                platform="telegram",
+                                records=log_records,
+                                pending_writes=pending_writes,
+                            )
+                        except Exception as e:
+                            print(f"⚠️ Failed to send Telegram to {name}: {e}", flush=True)
+                            log_records = update_log(
+                                gsheet,
+                                DATABASE_SPREADSHEET_ID,
+                                name,
+                                id=chat_id,
+                                preview=reminder_text[:100],
+                                hash_value=hash_value,
+                                status=f"error: {e}",
+                                platform="telegram",
+                                records=log_records,
+                                pending_writes=pending_writes,
+                            )
         await asyncio.sleep(random.uniform(6, 15))
 
     # Flush all log writes in one batch after the full loop
@@ -570,59 +743,32 @@ async def send_choir_notification_reminders():
             next_three = filter_df.head(3).copy()
             next_three["Tanggal_dt"] = next_three["tgl-format"]
 
-            tanggal_list = []
-            for _, row in next_three.iterrows():
-                if pd.notnull(row["Tanggal_dt"]):
-                    hari = format_date(row["Tanggal_dt"], "EEEE", locale="id")
-                    tanggal = format_date(row["Tanggal_dt"], "d MMMM y", locale="id")
-                    jam = str(row["Jam"]).strip() if pd.notnull(row["Jam"]) else ""
-                    organist = str(row.get("Organis", "")).strip() or "-"
-                    tanggal_list.append(f"- {hari}, {tanggal} • {jam} (Organist: {organist})")
-
-            schedule_string = "\n".join(tanggal_list)
-
-            reminder_text = REMINDER_MESSAGE_TEMPLATE_CHOIR.format(
-                coord_name=(rec.coordinator_name or "Koordinator").capitalize(),
-                choir_name=rec.choir_name.capitalize(),
-                schedule_list=schedule_string
+            reminder_text = build_choir_highlight_reminder(
+                rec.coordinator_name or "Koordinator",
+                rec.choir_name,
+                next_three,
             )
-
-            print(reminder_text, flush=True)
-            print("=" * 60, flush=True)
-
-            # Create schedule hash based on dates & times
-            hash_value = "|".join(tanggal_list)
-
-            # Notification by WhatsApp
-            if rec.has_whatsapp():
-                previous_log = read_last_choir_log(
-                    gsheet, DATABASE_SPREADSHEET_ID, rec.wa_number, rec.choir_name,
-                    records=choir_log_records
+            if not reminder_text:
+                print(
+                    f"⚠️ Skipping notifications for {rec.choir_name}: no valid schedule dates.",
+                    flush=True,
                 )
+            else:
+                print(reminder_text, flush=True)
+                print("=" * 60, flush=True)
 
-                if previous_log and previous_log.get("Schedule Hash") == hash_value:
-                    # Same schedule → skip sending
-                    print(f"⏭ SKIPPED (duplicate schedule): {rec.choir_name}", flush=True)
-                    choir_log_records = update_choir_log(
-                        gsheet,
-                        DATABASE_SPREADSHEET_ID,
-                        rec.choir_name,
-                        rec.coordinator_name,
-                        rec.wa_number,
-                        preview=reminder_text[:100],
-                        hash_value=hash_value,
-                        status="skipped",
-                        records=choir_log_records,
-                        pending_writes=choir_pending_writes,
+                hash_value = reminder_message_hash(reminder_text)
+
+                # Notification by WhatsApp
+                if rec.has_whatsapp() and not skip_whatsapp():
+                    previous_log = read_last_choir_log(
+                        gsheet, DATABASE_SPREADSHEET_ID, rec.wa_number, rec.choir_name,
+                        records=choir_log_records
                     )
-                else:
-                    try:
-                        whatsAppBot = WhatsAppBot()
-                        whatsAppBot.send(rec.wa_number, reminder_text)
-                        print(
-                            f"📨 Whatsapp Reminder sent to {rec.choir_name} ({rec.wa_number})",
-                            flush=True,
-                        )
+
+                    if previous_log and previous_log.get("Schedule Hash") == hash_value:
+                        # Same schedule → skip sending
+                        print(f"⏭ SKIPPED (duplicate schedule): {rec.choir_name}", flush=True)
                         choir_log_records = update_choir_log(
                             gsheet,
                             DATABASE_SPREADSHEET_ID,
@@ -631,24 +777,44 @@ async def send_choir_notification_reminders():
                             rec.wa_number,
                             preview=reminder_text[:100],
                             hash_value=hash_value,
-                            status="sent",
+                            status="skipped",
                             records=choir_log_records,
                             pending_writes=choir_pending_writes,
                         )
-                    except Exception as e:
-                        print(f"⚠️ Failed to send Whatsapp to {rec.choir_name}: {e}", flush=True)
-                        choir_log_records = update_choir_log(
-                            gsheet,
-                            DATABASE_SPREADSHEET_ID,
-                            rec.choir_name,
-                            rec.coordinator_name,
-                            rec.wa_number,
-                            preview=reminder_text[:100],
-                            hash_value=hash_value,
-                            status=f"error: {e}",
-                            records=choir_log_records,
-                            pending_writes=choir_pending_writes,
-                        )
+                    else:
+                        try:
+                            whatsAppBot = WhatsAppBot()
+                            whatsAppBot.send(rec.wa_number, reminder_text)
+                            print(
+                                f"📨 Whatsapp Reminder sent to {rec.choir_name} ({rec.wa_number})",
+                                flush=True,
+                            )
+                            choir_log_records = update_choir_log(
+                                gsheet,
+                                DATABASE_SPREADSHEET_ID,
+                                rec.choir_name,
+                                rec.coordinator_name,
+                                rec.wa_number,
+                                preview=reminder_text[:100],
+                                hash_value=hash_value,
+                                status="sent",
+                                records=choir_log_records,
+                                pending_writes=choir_pending_writes,
+                            )
+                        except Exception as e:
+                            print(f"⚠️ Failed to send Whatsapp to {rec.choir_name}: {e}", flush=True)
+                            choir_log_records = update_choir_log(
+                                gsheet,
+                                DATABASE_SPREADSHEET_ID,
+                                rec.choir_name,
+                                rec.coordinator_name,
+                                rec.wa_number,
+                                preview=reminder_text[:100],
+                                hash_value=hash_value,
+                                status=f"error: {e}",
+                                records=choir_log_records,
+                                pending_writes=choir_pending_writes,
+                            )
         await asyncio.sleep(random.uniform(6, 15))
 
     # Flush all choir log writes in one batch after the full loop
@@ -658,12 +824,19 @@ async def send_choir_notification_reminders():
 
 
 async def check_and_run():
-    # await send_organist_notification_reminders()
-    # await send_choir_notification_reminders()
-    # return 
-    whatsAppBot = WhatsAppBot()
     admin_chat_id = "1731149425"
-    
+
+    if skip_whatsapp():
+        print(
+            "SKIP_WHATSAPP is set: skipping WhatsApp health check and all WhatsApp sends.",
+            flush=True,
+        )
+        await send_organist_notification_reminders()
+        await send_choir_notification_reminders()
+        return
+
+    whatsAppBot = WhatsAppBot()
+
     print("Checking WhatsApp connection status...")
     
     error_msg = None
