@@ -92,6 +92,16 @@ def _info_cell_text(info: Any) -> str:
     return str(info).strip()
 
 
+def _optional_highlight_detail_line(label: str, value: Any) -> list[str]:
+    """One ``Label: value`` line if value is non-empty; otherwise no lines."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    s = str(value).strip()
+    if not s:
+        return []
+    return [f"{label}: {s}"]
+
+
 def format_highlight_song_value(raw: str) -> str:
     """Display label for Ordinarium / Bapa Kami in highlight cards (e.g. ``ps 404`` -> ``PS 404``)."""
     s = (raw or "").strip()
@@ -160,6 +170,8 @@ def build_organist_highlight_reminder(name: str, next_three: Any) -> str:
     koor_show = capwords(koor_raw) if koor_raw != "-" else "-"
     lines.append(_highlight_date_line(hari, tanggal, jam))
     lines.append(f"👥 Koor: {koor_show}")
+    lines.extend(_optional_highlight_detail_line("Anamnesis", first.get("Anamnesis")))
+    lines.extend(_optional_highlight_detail_line("Cara Tobat", first.get("Cara Tobat")))
     lines.extend(_song_lines_from_info(first.get("Info")))
 
     if len(rows) > 1:
@@ -207,6 +219,8 @@ def build_choir_highlight_reminder(
     org_show = org_raw if org_raw == "-" else capwords(org_raw)
     lines.append(_highlight_date_line(hari, tanggal, jam))
     lines.append(f"🎹 Organis: {org_show}")
+    lines.extend(_optional_highlight_detail_line("Anamnesis", first.get("Anamnesis")))
+    lines.extend(_optional_highlight_detail_line("Cara Tobat", first.get("Cara Tobat")))
     lines.extend(_song_lines_from_info(first.get("Info")))
 
     if len(rows) > 1:
