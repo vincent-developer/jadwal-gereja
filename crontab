@@ -1,0 +1,3 @@
+# Format: Menit Jam Tanggal Bulan Hari Perintah
+0 6 * * * /usr/local/bin/python /usr/src/app/scripts/generate_organist_schedule.py > /proc/1/fd/1 2>/proc/1/fd/2
+# Baris kosong wajib di akhir file

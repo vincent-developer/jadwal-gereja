@@ -24,3 +24,5 @@ python-telegram-bot==21.*
 # google-auth-httplib2
 # google-api-python-client
 
+nest-asyncio
+
