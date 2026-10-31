@@ -10,3 +10,9 @@ services:
       # (Sangat disarankan) Mapping folder lokal ke dalam container, 
       # sehingga kalau Anda edit kode Python, tidak perlu rebuild image.
       - .:/usr/src/app
+    networks:              # <-- Tambahkan 2 baris ini
+      - church-network
+
+networks:
+  church-network:
+    name: church-network
